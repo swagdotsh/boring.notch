@@ -33,6 +33,7 @@ struct ContentView: View {
 
     @Namespace var albumArtNamespace
 
+    @Default(.showBatteriesTab) var showBatteriesTab
     @Default(.useMusicVisualizer) var useMusicVisualizer
 
     @Default(.showNotHumanFace) var showNotHumanFace
@@ -361,6 +362,11 @@ struct ContentView: View {
                 .zIndex(1)
                 .allowsHitTesting(vm.notchState == .open)
                 .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+            }
+        }
+        .onChange(of: showBatteriesTab) { _, enabled in
+            if !enabled && coordinator.currentView == .batteries {
+                coordinator.currentView = .home
             }
         }
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))

@@ -25,9 +25,10 @@ struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @Namespace var animation
     @Default(.boringShelf) var shelfEnabled
+    @Default(.showBatteriesTab) var batteriesEnabled
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(tabs.filter { $0.view != .shelf || shelfEnabled }) { tab in
+            ForEach(tabs.filter { ($0.view != .shelf || shelfEnabled) && ($0.view != .batteries || batteriesEnabled) }) { tab in
                     TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
                         withAnimation(.smooth) {
                             coordinator.currentView = tab.view

@@ -18736,6 +18736,9 @@
         }
       }
     },
+    "Show Batteries tab" : {
+
+    },
     "Show battery indicator" : {
       "localizations" : {
         "ar" : {
