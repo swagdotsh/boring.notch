@@ -16,7 +16,7 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
 
     // MARK: - Properties
     @Published private(set) var playbackState: PlaybackState = .init(
-        bundleIdentifier: "com.apple.Music"
+        bundleIdentifier: "", title: "", artist: "", album: ""
     )
 
     var playbackStatePublisher: AnyPublisher<PlaybackState, Never> {
@@ -110,7 +110,6 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
         if let process = self.process {
             if process.isRunning {
                 process.terminate()
-                process.waitUntilExit()
             }
         }
 
@@ -193,12 +192,12 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
             let scriptURL = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl"),
             let frameworkPath = Bundle.main.privateFrameworksPath?.appending("/MediaRemoteAdapter.framework")
         else {
-            assertionFailure("Could not find mediaremote-adapter.pl script or framework path")
+            NSLog("Now Playing: adapter resources are missing")
             return
         }
         
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        process.arguments = [scriptURL.path, frameworkPath, "stream"]
+        process.arguments = [scriptURL.path, frameworkPath, "stream", "--no-diff"]
         
         let pipeHandler = JSONLinesPipeHandler()
         process.standardOutput = await pipeHandler.getPipe()
@@ -208,97 +207,30 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
 
         do {
             try process.run()
-            streamTask = Task { [weak self] in
-                await self?.processJSONStream()
+            try await pipeHandler.closeWriter()
+            streamTask = Task { [weak self, pipeHandler] in
+                await pipeHandler.readJSONLines(as: NowPlayingUpdate.self) { [weak self] update in
+                    await self?.handleAdapterUpdate(update)
+                }
+                await pipeHandler.close()
+                guard !Task.isCancelled else { return }
+                NSLog("Now Playing: adapter stream ended; reconnecting")
+                if process.isRunning { process.terminate() }
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch { return }
+                await self?.setupNowPlayingObserver()
             }
         } catch {
-            assertionFailure("Failed to launch mediaremote-adapter.pl: \(error)")
+            NSLog("Now Playing: failed to launch adapter: %@", String(describing: error))
         }
     }
 
-    // MARK: - Async Stream Processing
-    private func processJSONStream() async {
-        guard let pipeHandler = self.pipeHandler else { return }
-        
-        await pipeHandler.readJSONLines(as: NowPlayingUpdate.self) { [weak self] update in
-            await self?.handleAdapterUpdate(update)
-        }
+    @MainActor
+    private func handleAdapterUpdate(_ update: NowPlayingUpdate) {
+        playbackState = update.applying(to: playbackState)
     }
 
-    // MARK: - Update Methods
-    private func handleAdapterUpdate(_ update: NowPlayingUpdate) async {
-        let payload = update.payload
-        let diff = update.diff ?? false
-
-        var newPlaybackState = PlaybackState(bundleIdentifier: playbackState.bundleIdentifier)
-        
-        newPlaybackState.title = payload.title ?? (diff ? self.playbackState.title : "")
-        newPlaybackState.artist = payload.artist ?? (diff ? self.playbackState.artist : "")
-        newPlaybackState.album = payload.album ?? (diff ? self.playbackState.album : "")
-        newPlaybackState.duration = payload.duration ?? (diff ? self.playbackState.duration : 0)
-        
-        if let elapsedTime = payload.elapsedTime {
-            newPlaybackState.currentTime = elapsedTime
-        } else if diff {
-            if payload.playing == false {
-                let timeSinceLastUpdate = Date().timeIntervalSince(self.playbackState.lastUpdated)
-                newPlaybackState.currentTime = self.playbackState.currentTime + (self.playbackState.playbackRate * timeSinceLastUpdate)
-            } else {
-                newPlaybackState.currentTime = self.playbackState.currentTime
-            }
-        } else {
-            newPlaybackState.currentTime = 0
-        }
-
-        
-        if let shuffleMode = payload.shuffleMode {
-            newPlaybackState.isShuffled = shuffleMode != 1
-        } else if !diff {
-            newPlaybackState.isShuffled = false
-        } else {
-            newPlaybackState.isShuffled = self.playbackState.isShuffled
-        }
-        if let repeatModeValue = payload.repeatMode {
-            newPlaybackState.repeatMode = RepeatMode(rawValue: repeatModeValue) ?? .off
-        } else if !diff {
-            newPlaybackState.repeatMode = .off
-        } else {
-            newPlaybackState.repeatMode = self.playbackState.repeatMode
-        }
-
-        if let artworkDataString = payload.artworkData {
-            newPlaybackState.artwork = Data(
-                base64Encoded: artworkDataString.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        } else if !diff {
-            newPlaybackState.artwork = nil
-        }
-
-        if let dateString = payload.timestamp,
-           let date = ISO8601DateFormatter().date(from: dateString) {
-            newPlaybackState.lastUpdated = date
-        } else if !diff {
-            newPlaybackState.lastUpdated = Date()
-        } else {
-            newPlaybackState.lastUpdated = self.playbackState.lastUpdated
-        }
-
-        newPlaybackState.playbackRate = payload.playbackRate ?? (diff ? self.playbackState.playbackRate : 1.0)
-        newPlaybackState.isPlaying = payload.playing ?? (diff ? self.playbackState.isPlaying : false)
-        newPlaybackState.bundleIdentifier = (
-            payload.parentApplicationBundleIdentifier ??
-            payload.bundleIdentifier ??
-            (diff ? self.playbackState.bundleIdentifier : "")
-        )
-        
-        newPlaybackState.volume = payload.volume ?? (diff ? self.playbackState.volume : 0.5)
-        
-        self.playbackState = newPlaybackState
-        
-        // Fetch favorite state for supported apps asynchronously
-        // await fetchFavoriteStateIfSupported()
-    }
-    
      private func fetchFavoriteStateIfSupported() async {
          let bundleID = playbackState.bundleIdentifier
         
@@ -347,80 +279,105 @@ struct NowPlayingPayload: Codable {
     let volume: Double?
 }
 
-actor JSONLinesPipeHandler {
-    private let pipe: Pipe
-    private let fileHandle: FileHandle
-    private var buffer = ""
-    
-    init() {
-        self.pipe = Pipe()
-        self.fileHandle = pipe.fileHandleForReading
-    }
-    
-    func getPipe() -> Pipe {
-        return pipe
-    }
-    
-    func readJSONLines<T: Decodable>(as type: T.Type, onLine: @escaping (T) async -> Void) async {
-        do {
-            try await self.processLines(as: type) { decodedObject in
-                await onLine(decodedObject)
-            }
-        } catch {
-            print("Error processing JSON stream: \(error)")
+extension NowPlayingUpdate {
+    func applying(to previous: PlaybackState, at now: Date = Date()) -> PlaybackState {
+        let isDiff = diff == true
+        var state = isDiff ? previous : PlaybackState(bundleIdentifier: "")
+        let payload = payload
+        state.title = payload.title ?? (isDiff ? previous.title : "")
+        state.artist = payload.artist ?? (isDiff ? previous.artist : "")
+        state.album = payload.album ?? (isDiff ? previous.album : "")
+        state.bundleIdentifier = payload.parentApplicationBundleIdentifier
+            ?? payload.bundleIdentifier ?? (isDiff ? previous.bundleIdentifier : "")
+        state.duration = payload.duration ?? (isDiff ? previous.duration : 0)
+        state.isPlaying = payload.playing ?? (isDiff ? previous.isPlaying : false)
+        state.playbackRate = payload.playbackRate ?? (isDiff ? previous.playbackRate : 1)
+        state.lastUpdated = payload.timestamp.flatMap { ISO8601DateFormatter().date(from: $0) } ?? now
+
+        if let elapsedTime = payload.elapsedTime {
+            state.currentTime = elapsedTime
+        } else if isDiff {
+            let elapsed = previous.isPlaying
+                ? max(0, state.lastUpdated.timeIntervalSince(previous.lastUpdated)) * previous.playbackRate : 0
+            state.currentTime = previous.currentTime + elapsed
+        } else {
+            state.currentTime = 0
         }
+        state.currentTime = max(0, state.currentTime)
+        if state.duration > 0 {
+            state.currentTime = min(state.currentTime, state.duration)
+        }
+        if let mode = payload.shuffleMode { state.isShuffled = mode != 1 }
+        if let mode = payload.repeatMode { state.repeatMode = RepeatMode(rawValue: mode) ?? .off }
+        if let artwork = payload.artworkData {
+            state.artwork = Data(base64Encoded: artwork.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        state.volume = payload.volume ?? (isDiff ? previous.volume : 0.5)
+        return state
     }
-    
-    private func processLines<T: Decodable>(as type: T.Type, onLine: @escaping (T) async -> Void) async throws {
-        while true {
-            let data = try await readData()
-            guard !data.isEmpty else { break }
-            
-            if let chunk = String(data: data, encoding: .utf8) {
-                buffer.append(chunk)
-                
-                while let range = buffer.range(of: "\n") {
-                    let line = String(buffer[..<range.lowerBound])
-                    buffer = String(buffer[range.upperBound...])
-                    
-                    if !line.isEmpty {
-                        await processJSONLine(line, as: type, onLine: onLine)
+}
+
+actor JSONLinesPipeHandler {
+    private let pipe = Pipe()
+    private var continuation: AsyncStream<Data>.Continuation?
+
+    func getPipe() -> Pipe { pipe }
+
+    func closeWriter() throws {
+        try pipe.fileHandleForWriting.close()
+    }
+
+    func readJSONLines<T: Decodable>(as type: T.Type, onLine: @escaping (T) async -> Void) async {
+        let handle = pipe.fileHandleForReading
+        let stream = AsyncStream<Data> { continuation in
+            self.continuation = continuation
+            handle.readabilityHandler = { handle in
+                do {
+                    let data = try handle.read(upToCount: 65_536) ?? Data()
+                    if data.isEmpty {
+                        handle.readabilityHandler = nil
+                        continuation.finish()
+                    } else {
+                        continuation.yield(data)
                     }
+                } catch {
+                    handle.readabilityHandler = nil
+                    continuation.finish()
                 }
             }
+            continuation.onTermination = { _ in handle.readabilityHandler = nil }
         }
-    }
-    
-    private func processJSONLine<T: Decodable>(_ line: String, as type: T.Type, onLine: @escaping (T) async -> Void) async {
-        guard let data = line.data(using: .utf8) else {
-            return
-        }
-        do {
-            let decodedObject = try JSONDecoder().decode(T.self, from: data)
-            await onLine(decodedObject)
-        } catch {
-            // Ignore lines that can't be decoded
-        }
-    }
-    
-    private func readData() async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            
-            fileHandle.readabilityHandler = { handle in
-                let data = handle.availableData
-                handle.readabilityHandler = nil
-                continuation.resume(returning: data)
+        var buffer = Data()
+        for await chunk in stream {
+            guard !Task.isCancelled else { break }
+            buffer.append(chunk)
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = Data(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+                await decode(line, as: type, onLine: onLine)
             }
         }
-    }
-    
-    func close() async {
-        do {
-            fileHandle.readabilityHandler = nil
-            try fileHandle.close()
-            try pipe.fileHandleForWriting.close()
-        } catch {
-            print("Error closing pipe handler: \(error)")
+        if !Task.isCancelled && !buffer.isEmpty {
+            await decode(buffer, as: type, onLine: onLine)
         }
+        handle.readabilityHandler = nil
+        continuation = nil
+    }
+
+    private func decode<T: Decodable>(_ data: Data, as type: T.Type, onLine: @escaping (T) async -> Void) async {
+        guard !data.isEmpty else { return }
+        do {
+            await onLine(try JSONDecoder().decode(type, from: data))
+        } catch {
+            NSLog("Now Playing: could not decode adapter update: %@", String(describing: error))
+        }
+    }
+
+    func close() {
+        continuation?.finish()
+        continuation = nil
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? pipe.fileHandleForReading.close()
+        try? pipe.fileHandleForWriting.close()
     }
 }

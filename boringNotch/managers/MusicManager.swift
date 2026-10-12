@@ -22,7 +22,7 @@ class MusicManager: ObservableObject {
     private var debounceIdleTask: Task<Void, Never>?
 
     // Helper to check if macOS has removed support for NowPlayingController
-    public private(set) var isNowPlayingDeprecated: Bool = false
+    @Published public private(set) var isNowPlayingDeprecated: Bool = false
     private let mediaChecker = MediaChecker()
 
     // Active controller

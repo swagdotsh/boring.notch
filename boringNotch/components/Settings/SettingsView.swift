@@ -592,6 +592,7 @@ struct HUD: View {
 }
 
 struct Media: View {
+    @ObservedObject private var musicManager = MusicManager.shared
     @Default(.waitInterval) var waitInterval
     @Default(.mediaController) var mediaController
     @ObservedObject var coordinator = BoringViewCoordinator.shared
@@ -618,7 +619,7 @@ struct Media: View {
             } header: {
                 Text("Media Source")
             } footer: {
-                if MusicManager.shared.isNowPlayingDeprecated {
+                if musicManager.isNowPlayingDeprecated {
                     HStack {
                         Text("YouTube Music requires this third-party app to be installed: ")
                             .foregroundStyle(.secondary)
@@ -699,7 +700,7 @@ struct Media: View {
 
     // Only show controller options that are available on this macOS version
     private var availableMediaControllers: [MediaControllerType] {
-        if MusicManager.shared.isNowPlayingDeprecated {
+        if musicManager.isNowPlayingDeprecated {
             return MediaControllerType.allCases.filter { $0 != .nowPlaying }
         } else {
             return MediaControllerType.allCases

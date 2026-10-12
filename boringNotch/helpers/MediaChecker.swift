@@ -34,34 +34,26 @@ final class MediaChecker: Sendable {
                 throw MediaCheckerError.processExecutionFailed
             }
 
-            // Timeout after 10 seconds
-            let didExit: Bool = try await withThrowingTaskGroup(of: Bool.self) { group in
-                group.addTask {
-                    process.waitUntilExit()
-                    return true
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(10))
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                    return false // Timed out
-                }
-                for try await exited in group {
-                    if exited {
-                        group.cancelAll()
-                        return true
-                    }
-                }
-                throw MediaCheckerError.timeout
-            }
+            try await Self.waitForExit(process, timeout: .seconds(10))
 
-            if !didExit {
-                throw MediaCheckerError.timeout
+            switch process.terminationStatus {
+            case 0: return false
+            case 1: return true
+            default: throw MediaCheckerError.processExecutionFailed
             }
-
-            let isDeprecated = process.terminationStatus == 1
-            return isDeprecated
         }.value
     }
+    static func waitForExit(_ process: Process, timeout: Duration) async throws {
+        defer {
+            if process.isRunning { process.terminate() }
+        }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while process.isRunning {
+            guard ContinuousClock.now < deadline else {
+                throw MediaCheckerError.timeout
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
 }

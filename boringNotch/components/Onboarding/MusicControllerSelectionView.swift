@@ -11,11 +11,12 @@ import Defaults
 
 struct MusicControllerSelectionView: View {
     let onContinue: () -> Void
+    @ObservedObject private var musicManager = MusicManager.shared
 
     @Default(.mediaController) var mediaController
     
     private var availableMediaControllers: [MediaControllerType] {
-        if MusicManager.shared.isNowPlayingDeprecated {
+        if musicManager.isNowPlayingDeprecated {
             return MediaControllerType.allCases.filter { $0 != .nowPlaying }
         } else {
             return MediaControllerType.allCases
