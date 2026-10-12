@@ -201,6 +201,9 @@
         }
       }
     },
+    "—" : {
+
+    },
     "'Now Playing' was the only option on previous versions and works with all media apps." : {
       "localizations" : {
         "ar" : {
@@ -2202,6 +2205,9 @@
         }
       }
     },
+    "AirPods Max not connected" : {
+
+    },
     "All-day" : {
       "localizations" : {
         "ar" : {
@@ -3202,6 +3208,9 @@
         }
       }
     },
+    "Batteries" : {
+
+    },
     "Battery" : {
       "localizations" : {
         "ar" : {
@@ -3601,6 +3610,9 @@
           }
         }
       }
+    },
+    "Battery unavailable" : {
+
     },
     "Boost your productivity with Clipboard Manager" : {
       "localizations" : {
@@ -4701,6 +4713,9 @@
           }
         }
       }
+    },
+    "Checking AirPods Max…" : {
+
     },
     "Choose a Music Source" : {
       "localizations" : {
@@ -5901,6 +5916,12 @@
           }
         }
       }
+    },
+    "Connect your AirPods Max via Bluetooth." : {
+
+    },
+    "Connected" : {
+
     },
     "Continue" : {
       "localizations" : {
@@ -16910,6 +16931,9 @@
         }
       }
     },
+    "Refresh battery levels" : {
+
+    },
     "Release name" : {
       "localizations" : {
         "ar" : {
@@ -23616,5 +23640,5 @@
       }
     }
   },
-  "version" : "1.0"
+  "version" : "1.1"
 }

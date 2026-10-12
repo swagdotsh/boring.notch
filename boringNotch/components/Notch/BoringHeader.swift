@@ -16,10 +16,8 @@ struct BoringHeader: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack {
-                if (!tvm.isEmpty || coordinator.alwaysShowTabs) && Defaults[.boringShelf] {
+                if coordinator.alwaysShowTabs || (!tvm.isEmpty && Defaults[.boringShelf]) || coordinator.currentView == .batteries {
                     TabSelectionView()
-                } else if vm.notchState == .open {
-                    EmptyView()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
