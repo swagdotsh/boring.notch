@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Show the battery level of your connected AirPods Max in the Batteries tab.</string>
+	<string>Boring Notch uses Bluetooth to show battery levels and charging status for your connected devices.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

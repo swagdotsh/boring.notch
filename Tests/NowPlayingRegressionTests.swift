@@ -50,11 +50,15 @@ struct NowPlayingRegressionTests {
             }
         }
         try await Task.sleep(for: .milliseconds(20))
-        let bytes = Data("{\"payload\":{\"title\":\"Geëk\"}}\n{\"payload\":{\"title\":\"Final line\"}}".utf8)
+        let artwork = String(repeating: "A", count: 100_000)
+        let bytes = Data("{\"payload\":{\"title\":\"Geëk\",\"artworkData\":\"\(artwork)\"}}\n{\"payload\":{\"title\":\"Final line\"}}".utf8)
         let split = bytes.firstIndex(of: 0xC3)! + 1
         try pipe.fileHandleForWriting.write(contentsOf: bytes[..<split])
         try await Task.sleep(for: .milliseconds(20))
         try pipe.fileHandleForWriting.write(contentsOf: bytes[split...])
+        try await Task.sleep(for: .milliseconds(100))
+        let beforeEOF = await titles.values
+        precondition(beforeEOF == ["Geëk"], "Artwork messages must arrive while the stream remains open, without another event")
         try await reader.closeWriter()
         await reading.value
         let received = await titles.values

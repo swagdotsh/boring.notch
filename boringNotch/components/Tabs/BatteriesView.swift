@@ -1,25 +1,54 @@
 import SwiftUI
 import IOBluetooth
 import ObjectiveC
+import IOKit.ps
+import Darwin
 
 struct AirPodsMaxBattery: Identifiable {
     let id: String
     let name: String
     let percentage: Int?
+    let isCharging: Bool?
 }
 
 enum AirPodsMaxBatteryReader {
     static func connectedDevices() -> [AirPodsMaxBattery] {
+        let powerSources = accessoryPowerSources()
         let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
         return devices.filter {
             $0.isConnected() && ($0.name ?? "").localizedCaseInsensitiveContains("AirPods Max")
         }.map { device in
-            AirPodsMaxBattery(
+            let name = displayName(of: device)
+            let matches = powerSources.filter { ($0[kIOPSNameKey] as? String) == name }
+            let powerSource = matches.count == 1 ? matches.first : nil
+            return AirPodsMaxBattery(
                 id: device.addressString ?? device.name ?? "AirPods Max",
-                name: displayName(of: device),
-                percentage: percentage(of: device)
+                name: name,
+                percentage: percentage(of: device),
+                isCharging: powerSource?[kIOPSIsChargingKey] as? Bool
             )
         }.sorted { $0.id < $1.id }
+    }
+
+    private typealias PowerSourcesGetter = @convention(c) (Int32) -> Unmanaged<CFTypeRef>?
+
+    private static let copyAccessoryPowerSources: PowerSourcesGetter? = {
+        guard let handle = dlopen(nil, RTLD_LAZY) else { return nil }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "IOPSCopyPowerSourcesByType") else { return nil }
+        return unsafeBitCast(symbol, to: PowerSourcesGetter.self)
+    }()
+
+    private static func accessoryPowerSources() -> [[String: Any]] {
+        guard let info = copyAccessoryPowerSources?(4)?.takeRetainedValue(),
+              let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
+            return []
+        }
+        return sources.compactMap {
+            IOPSGetPowerSourceDescription(info, $0)?.takeUnretainedValue() as? [String: Any]
+        }.filter {
+            ($0[kIOPSIsPresentKey] as? Bool) == true && ($0["Part Identifier"] as? String) == "Single"
+        }
     }
 
     private static func displayName(of device: IOBluetoothDevice) -> String {
@@ -60,33 +89,7 @@ struct BatteriesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Batteries")
-                    .font(.headline)
-                Spacer()
-                Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help("Refresh battery levels")
-                .accessibilityLabel("Refresh battery levels")
-            }
-
-            if devices.isEmpty {
-                HStack(spacing: 14) {
-                    Image(systemName: "airpodsmax")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(hasRefreshed ? "AirPods Max not connected" : "Checking AirPods Max…")
-                            .font(.subheadline.weight(.medium))
-                        Text("Connect your AirPods Max via Bluetooth.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+            if !devices.isEmpty {
                 ForEach(devices) { device in
                     HStack(spacing: 14) {
                         Image(systemName: "airpodsmax")
@@ -96,19 +99,19 @@ struct BatteriesView: View {
                             Text(device.name)
                                 .font(.subheadline.weight(.medium))
                                 .lineLimit(1)
-                            Text(device.percentage == nil ? "Battery unavailable" : "Connected")
+                            Text(device.percentage == nil ? "Battery unavailable" : (device.isCharging == true ? "Charging" : "Connected"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
                         if let percentage = device.percentage {
-                            VStack(alignment: .trailing, spacing: 4) {
+                            HStack(spacing: 6) {
                                 Text("\(percentage)%")
-                                    .font(.system(.title2, design: .rounded).weight(.semibold))
+                                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
                                     .monospacedDigit()
-                                Image(systemName: batterySymbol(percentage))
-                                    .foregroundStyle(percentage <= 20 ? Color.red : Color.green)
+                                Image(systemName: device.isCharging == true ? "battery.100percent.bolt" : batterySymbol(percentage))
                             }
+                            .foregroundStyle(device.isCharging == true ? Color.green : (percentage <= 25 ? Color.red : Color.white))
                         } else {
                             Text("—")
                                 .font(.title2)
@@ -122,16 +125,40 @@ struct BatteriesView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(alignment: .topTrailing) {
+            refreshButton
+                .frame(width: 24, height: 24)
+                .padding(.trailing, 8)
+                .offset(y: -12)
+        }
+        .overlay {
+            if devices.isEmpty {
+                Text(hasRefreshed ? "No devices found." : "Checking devices…")
+                    .font(.subheadline)
+                    .foregroundStyle(.gray)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .task {
             while !Task.isCancelled {
                 refresh()
                 do {
-                    try await Task.sleep(for: .seconds(15))
+                    try await Task.sleep(for: .seconds(5))
                 } catch {
                     return
                 }
             }
         }
+    }
+
+    private var refreshButton: some View {
+        Button(action: refresh) {
+            Image(systemName: "arrow.clockwise")
+        }
+        .buttonStyle(.plain)
+        .help("Refresh battery levels")
+        .accessibilityLabel("Refresh battery levels")
     }
 
     private func refresh() {

@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Foundation
+import Darwin
 
 final class NowPlayingController: ObservableObject, MediaControllerProtocol {
     func updatePlaybackInfo() async {
@@ -329,18 +330,18 @@ actor JSONLinesPipeHandler {
 
     func readJSONLines<T: Decodable>(as type: T.Type, onLine: @escaping (T) async -> Void) async {
         let handle = pipe.fileHandleForReading
+        let descriptor = handle.fileDescriptor
         let stream = AsyncStream<Data> { continuation in
             self.continuation = continuation
             handle.readabilityHandler = { handle in
-                do {
-                    let data = try handle.read(upToCount: 65_536) ?? Data()
-                    if data.isEmpty {
-                        handle.readabilityHandler = nil
-                        continuation.finish()
-                    } else {
-                        continuation.yield(data)
-                    }
-                } catch {
+                var data = Data(count: 65_536)
+                let count = data.withUnsafeMutableBytes {
+                    Darwin.read(descriptor, $0.baseAddress, $0.count)
+                }
+                if count > 0 {
+                    data.count = count
+                    continuation.yield(data)
+                } else if count == 0 || (errno != EINTR && errno != EAGAIN) {
                     handle.readabilityHandler = nil
                     continuation.finish()
                 }

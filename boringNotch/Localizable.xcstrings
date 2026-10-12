@@ -205,6 +205,7 @@
 
     },
     "'Now Playing' was the only option on previous versions and works with all media apps." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2205,9 +2206,6 @@
         }
       }
     },
-    "AirPods Max not connected" : {
-
-    },
     "All-day" : {
       "localizations" : {
         "ar" : {
@@ -3207,9 +3205,6 @@
           }
         }
       }
-    },
-    "Batteries" : {
-
     },
     "Battery" : {
       "localizations" : {
@@ -4714,7 +4709,7 @@
         }
       }
     },
-    "Checking AirPods Max…" : {
+    "Checking devices…" : {
 
     },
     "Choose a Music Source" : {
@@ -5916,9 +5911,6 @@
           }
         }
       }
-    },
-    "Connect your AirPods Max via Bluetooth." : {
-
     },
     "Connected" : {
 
@@ -14729,6 +14721,9 @@
           }
         }
       }
+    },
+    "No devices found." : {
+
     },
     "No events" : {
       "localizations" : {
